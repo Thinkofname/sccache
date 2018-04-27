@@ -78,11 +78,31 @@ impl Bucket {
         })
     }
 
-    pub fn get(&self, key: &str) -> SFuture<Vec<u8>> {
+    pub fn get(&self, key: &str, creds: &AwsCredentials) -> SFuture<Vec<u8>> {
         let url = format!("{}{}", self.base_url, key);
         debug!("GET {}", url);
+
+        let mut request = Request::new(Method::Get, url.parse().unwrap());
+
+        let mut canonical_headers = String::new();
+        let token = creds.token().as_ref().map(|s| s.as_str());
+        // Keep the list of header values sorted!
+        for (header, maybe_value) in vec![
+            ("x-amz-security-token", token),
+            ] {
+            if let Some(ref value) = maybe_value {
+                request.headers_mut()
+                       .set_raw(header, vec!(value.as_bytes().to_vec()));
+                canonical_headers.push_str(format!("{}:{}\n", header.to_ascii_lowercase(), value).as_ref());
+            }
+        }
+        let date = time::now_utc().rfc822().to_string();
+        let auth = self.auth("GET", &date, key, "", &canonical_headers, "", creds);
+        request.headers_mut().set_raw("Authorization", vec!(auth.into_bytes()));
+        request.headers_mut().set_raw("Date", vec!(date.into_bytes()));
+
         let url2 = url.clone();
-        Box::new(self.client.get(url.parse().unwrap()).chain_err(move || {
+        Box::new(self.client.request(request).chain_err(move || {
             format!("failed GET: {}", url)
         }).and_then(|res| {
             if res.status().is_success() {

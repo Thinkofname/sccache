@@ -71,7 +71,11 @@ fn normalize_key(key: &str) -> String {
 impl Storage for S3Cache {
     fn get(&self, key: &str) -> SFuture<Cache> {
         let key = normalize_key(key);
-        Box::new(self.bucket.get(&key).then(|result| {
+        let credentials = self.provider.credentials().chain_err(|| {
+            "failed to get AWS credentials"
+        });
+        let bucket = self.bucket.clone();
+        Box::new(credentials.and_then(move |credentials| bucket.get(&key, &credentials).then(|result| {
             match result {
                 Ok(data) => {
                     let hit = CacheRead::from(io::Cursor::new(data))?;
@@ -82,7 +86,7 @@ impl Storage for S3Cache {
                     Ok(Cache::Miss)
                 }
             }
-        }))
+        })))
     }
 
     fn put(&self, key: &str, entry: CacheWrite) -> SFuture<Duration> {
